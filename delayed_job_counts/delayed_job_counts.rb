@@ -1,4 +1,5 @@
 class DelayedJobCounts < Scout::Plugin
+  needs 'mysql2'
 
   OPTIONS=<<-EOS
     user:
@@ -24,23 +25,29 @@ class DelayedJobCounts < Scout::Plugin
       notes: Specify the default database to connect to
     EOS
 
-  needs 'mysql2'
-
   def build_report
     report(count_by_job)
   end
 
   private
 
-  def count_by_job
-    load_jobs.reduce({}) do |results, job|
-      klass = job_klass(job)
-      klass = job[:failed_at] ? "FAILED: #{klass}" : "QUEUED: #{klass}"
+  JOB_OBJECT_REGEX = /\!ruby\/object\:([^\s]+).*\!ruby\/class '([^\s]+)'.*method_name: :([^\s]+)/m
+  JOB_STRUCT_REGEX = /\!ruby\/struct\:([^\s]+)/
+  JOB_NAMES_KEY = :delayed_job_names
 
-      results[klass] ||= 0
-      results[klass] += 1
+  def count_by_job
+    counts = load_jobs.reduce(known_jobs) do |results, job|
+      klass = job_klass(job)
+      name = job[:failed_at] ? "FAILED: #{klass}" : "QUEUED: #{klass}"
+
+      results[name] ||= 0
+      results[name] += 1
       results
     end
+
+    remember_jobs(counts.keys)
+
+    counts
   end
 
   def load_jobs
@@ -62,9 +69,6 @@ class DelayedJobCounts < Scout::Plugin
     end
   end
 
-  JOB_OBJECT_REGEX = /\!ruby\/object\:([^\s]+).*\!ruby\/class '([^\s]+)'.*method_name: :([^\s]+)/m
-  JOB_STRUCT_REGEX = /\!ruby\/struct\:([^\s]+)/
-
   def job_klass(job)
     if JOB_OBJECT_REGEX.match(job[:handler])
       "#{$1} - #{$2}##{$3}"
@@ -73,6 +77,17 @@ class DelayedJobCounts < Scout::Plugin
     else
       "unknown"
     end
+  end
+
+  def known_jobs
+    (memory(JOB_NAMES_KEY) || []).reduce({}) do |result, name|
+      result[name] ||= 0
+      result
+    end
+  end
+
+  def remember_jobs(names)
+    remember(JOB_NAMES_KEY, names)
   end
 
 end
