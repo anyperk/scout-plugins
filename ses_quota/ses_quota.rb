@@ -1,5 +1,5 @@
 class SesQuota < Scout::Plugin
-  needs :json
+  needs 'json'
 
   OPTIONS=<<-EOS
     region:
